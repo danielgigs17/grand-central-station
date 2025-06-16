@@ -5,13 +5,13 @@ import httpx
 import json
 import logging
 
-from app.models import PlatformAccount
+# from app.models import PlatformAccount  # Comment out to avoid DB dependency
 
 
 class PlatformAdapter(ABC):
     """Base class for platform adapters."""
     
-    def __init__(self, account: PlatformAccount):
+    def __init__(self, account):
         self.account = account
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.client = httpx.Client(
@@ -79,7 +79,7 @@ class PlatformAdapter(ABC):
 class BrowserAdapter(PlatformAdapter):
     """Base class for adapters that need browser automation."""
     
-    def __init__(self, account: PlatformAccount):
+    def __init__(self, account):
         super().__init__(account)
         self.page = None
         self.browser = None

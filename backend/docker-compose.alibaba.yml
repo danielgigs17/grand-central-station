@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  alibaba-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile.alibaba
+    container_name: alibaba-message-sync
+    restart: unless-stopped
+    environment:
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - DATABASE_URL=${DATABASE_URL}
+      - SYNC_INTERVAL_MINUTES=${SYNC_INTERVAL_MINUTES:-5}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ALIBABA_USERNAME=${ALIBABA_USERNAME}
+      - ALIBABA_PASSWORD=${ALIBABA_PASSWORD}
+    volumes:
+      - ./logs:/app/logs
+      - ./screenshots:/app/screenshots
+    depends_on:
+      - postgres
+    networks:
+      - alibaba-sync-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  postgres:
+    image: postgres:15
+    container_name: alibaba-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-grand_central_station}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - alibaba-sync-network
+
+volumes:
+  postgres_data:
+
+networks:
+  alibaba-sync-network:
+    driver: bridge
