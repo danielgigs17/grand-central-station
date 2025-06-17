@@ -159,10 +159,7 @@ class AlibabaSyncService:
                     existing_chat = self.db.query(Chat).filter(
                         and_(
                             Chat.account_id == account.id,
-                            or_(
-                                Chat.platform_chat_id == conv_data.get('id'),
-                                Chat.id == conv_data.get('id')  # Fallback
-                            )
+                            Chat.platform_chat_id == conv_data.get('id')
                         )
                     ).first()
                     
