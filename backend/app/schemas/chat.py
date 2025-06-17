@@ -75,3 +75,47 @@ class ChatWithDetails(Chat):
     platform_name: str
     last_message_content: Optional[str] = None
     last_message_time: Optional[datetime] = None
+
+
+class ProfileResponse(BaseModel):
+    id: str
+    name: Optional[str]
+    username: Optional[str]
+    avatar_url: Optional[str]
+    bio: Optional[str]
+    location: Optional[str]
+    is_active: bool
+
+
+class PlatformResponse(BaseModel):
+    id: str
+    name: str
+    display_name: str
+    icon_url: Optional[str]
+    is_active: bool
+
+
+class MessageResponse(BaseModel):
+    id: str
+    content: Optional[str]
+    direction: str
+    created_at: str
+    sender_name: Optional[str]
+
+
+class ChatResponse(BaseModel):
+    id: str
+    account_id: str
+    profile_id: Optional[str]
+    platform_chat_id: str
+    is_active: bool
+    is_archived: bool
+    is_starred: bool
+    is_muted: bool
+    unread_count: int
+    last_message_at: Optional[str]
+    created_at: str
+    updated_at: str
+    profile: Optional[ProfileResponse]
+    platform: Optional[PlatformResponse]
+    last_message: Optional[MessageResponse]
