@@ -11,10 +11,11 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 class EmailTwoFactorReader:
-    def __init__(self, email_address: str, password: str, imap_server: str = "imap.fastmail.com"):
+    def __init__(self, email_address: str, password: str, imap_server: str = "imap.fastmail.com", folder: str = "INBOX"):
         self.email_address = email_address
         self.password = password
         self.imap_server = imap_server
+        self.folder = folder
         self.mail = None
         
     def connect(self) -> bool:
@@ -53,8 +54,17 @@ class EmailTwoFactorReader:
             if not self.connect():
                 return None
                 
-            # Select inbox
-            self.mail.select('INBOX')
+            # Select the specified folder (inbox or 2FA folder)
+            logger.info(f"📂 Selecting folder: {self.folder}")
+            try:
+                self.mail.select(self.folder)
+            except Exception as e:
+                if self.folder != "INBOX":
+                    logger.warning(f"⚠️  Folder '{self.folder}' not found, falling back to INBOX: {e}")
+                    self.folder = "INBOX"
+                    self.mail.select(self.folder)
+                else:
+                    raise e
             
             # Search for recent emails from Alibaba
             since_date = (datetime.now() - timedelta(minutes=max_age_minutes)).strftime("%d-%b-%Y")

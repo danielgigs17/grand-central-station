@@ -31,7 +31,13 @@ class PlatformAdapter(ABC):
     def _load_cookies(self) -> Dict[str, str]:
         """Load cookies from account session data."""
         if self.account.session_data and "cookies" in self.account.session_data:
-            return self.account.session_data["cookies"]
+            cookies = self.account.session_data["cookies"]
+            # Handle both list and dict formats
+            if isinstance(cookies, list):
+                # Convert list of cookie objects to dict
+                return {cookie.get("name", ""): cookie.get("value", "") for cookie in cookies if "name" in cookie}
+            elif isinstance(cookies, dict):
+                return cookies
         return {}
     
     def _save_cookies(self):

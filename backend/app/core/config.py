@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     ENABLE_AUTO_REPLY: bool = Field(True, env="ENABLE_AUTO_REPLY")
     DEBUG: bool = Field(False, env="DEBUG")
     
+    # Alibaba automation settings
+    BROWSER_HEADLESS: bool = Field(True, env="BROWSER_HEADLESS")
+    EMAIL_2FA_FOLDER: str = Field("2FA", env="EMAIL_2FA_FOLDER")
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

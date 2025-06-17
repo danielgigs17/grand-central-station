@@ -5,7 +5,7 @@ from app.adapters.grindr import GrindrAdapter
 from app.adapters.alibaba import AlibabaAdapter, AlibabaBrowserAdapter
 from app.adapters.alibaba_real import AlibabaRealAdapter, AlibabaRealBrowserAdapter
 from app.adapters.alibaba_production import AlibabaProductionAdapter
-from app.models.platform_account import PlatformAccount
+from app.models.platform import PlatformAccount
 
 
 # Registry of available adapters

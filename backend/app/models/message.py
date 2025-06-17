@@ -40,6 +40,10 @@ class Message(Base):
     ai_generated = Column(Boolean, default=False)
     ai_response_id = Column(UUID(as_uuid=True), ForeignKey("ai_responses.id"))
     
+    # Reply tracking
+    is_reply = Column(Boolean, default=False)
+    reply_to_content = Column(Text)  # Content of the message being replied to
+    
     # Timestamps from platform
     platform_timestamp = Column(DateTime(timezone=True))
     delivered_at = Column(DateTime(timezone=True))

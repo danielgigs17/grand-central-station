@@ -19,9 +19,9 @@ source venv/bin/activate
 echo "Upgrading pip..."
 pip install --upgrade pip
 
-# Install basic requirements
-echo "Installing basic requirements..."
-pip install playwright asyncio python-dotenv
+# Install core requirements for Alibaba sync
+echo "Installing core requirements..."
+pip install playwright asyncio python-dotenv sqlalchemy psycopg2-binary
 
 # Install Playwright browsers
 echo "Installing Playwright browsers..."

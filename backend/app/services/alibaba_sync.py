@@ -4,12 +4,14 @@
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
-from app.models import PlatformAccount, Chat, Message, Profile, MessageDirection, MessageStatus
+from app.models import PlatformAccount, Chat, Message, Profile
+from app.models.message import MessageDirection, MessageStatus
 from app.adapters.alibaba_production import AlibabaProductionAdapter
+from app.adapters.alibaba_longrunning import AlibabaLongRunningAdapter
 from app.db.base import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -18,9 +20,11 @@ logger = logging.getLogger(__name__)
 class AlibabaSyncService:
     """Service for syncing Alibaba messages."""
     
-    def __init__(self, db: Session = None):
+    def __init__(self, db: Session = None, use_longrunning: bool = True):
         self.db = db or SessionLocal()
         self.adapter = None
+        self.use_longrunning = use_longrunning
+        self._adapter_cache = {}  # Cache adapters by account ID
         
     async def sync_account_initial(self, account_id: str, days_back: int = 7) -> Dict[str, Any]:
         """Perform initial sync for an Alibaba account going back specified days."""
@@ -35,8 +39,13 @@ class AlibabaSyncService:
             if not account:
                 return {"success": False, "error": f"Account {account_id} not found"}
             
-            # Initialize adapter
-            self.adapter = AlibabaProductionAdapter(account)
+            # Initialize adapter (use cached if available for long-running)
+            if self.use_longrunning:
+                if account_id not in self._adapter_cache:
+                    self._adapter_cache[account_id] = AlibabaLongRunningAdapter(account)
+                self.adapter = self._adapter_cache[account_id]
+            else:
+                self.adapter = AlibabaProductionAdapter(account)
             
             # Authenticate
             if not await self.adapter.authenticate():
@@ -74,10 +83,12 @@ class AlibabaSyncService:
             return {"success": True, "stats": sync_stats}
             
         except Exception as e:
+            import traceback
             logger.error(f"❌ Initial sync failed: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
         finally:
-            if self.adapter:
+            if self.adapter and not self.use_longrunning:
                 await self.adapter.close()
     
     async def sync_account_incremental(self, account_id: str) -> Dict[str, Any]:
@@ -96,8 +107,13 @@ class AlibabaSyncService:
             # Determine sync cutoff (last sync time or 1 hour ago as fallback)
             since = account.last_sync or (datetime.utcnow() - timedelta(hours=1))
             
-            # Initialize adapter
-            self.adapter = AlibabaProductionAdapter(account)
+            # Initialize adapter (use cached if available for long-running)
+            if self.use_longrunning:
+                if account_id not in self._adapter_cache:
+                    self._adapter_cache[account_id] = AlibabaLongRunningAdapter(account)
+                self.adapter = self._adapter_cache[account_id]
+            else:
+                self.adapter = AlibabaProductionAdapter(account)
             
             # Authenticate
             if not await self.adapter.authenticate():
@@ -171,7 +187,7 @@ class AlibabaSyncService:
             logger.error(f"❌ Incremental sync failed: {e}")
             return {"success": False, "error": str(e)}
         finally:
-            if self.adapter:
+            if self.adapter and not self.use_longrunning:
                 await self.adapter.close()
     
     async def _process_conversation(self, account: PlatformAccount, conv_data: Dict[str, Any], days_back: int) -> Dict[str, Any]:
@@ -184,7 +200,7 @@ class AlibabaSyncService:
         
         try:
             # Create or get profile for the conversation participant
-            profile = await self._get_or_create_profile(conv_data)
+            profile = await self._get_or_create_profile(account, conv_data)
             if profile:
                 stats["profiles_created"] = 1
             
@@ -207,7 +223,7 @@ class AlibabaSyncService:
             logger.error(f"Error processing conversation: {e}")
             return stats
     
-    async def _get_or_create_profile(self, conv_data: Dict[str, Any]) -> Optional[Profile]:
+    async def _get_or_create_profile(self, account: PlatformAccount, conv_data: Dict[str, Any]) -> Optional[Profile]:
         """Get or create a profile for the conversation participant."""
         try:
             # Extract profile info from conversation data
@@ -215,9 +231,12 @@ class AlibabaSyncService:
             if not username:
                 username = "Unknown User"
             
-            # Look for existing profile
+            # Look for existing profile for this account
             existing_profile = self.db.query(Profile).filter(
-                Profile.username == username
+                and_(
+                    Profile.account_id == account.id,
+                    Profile.username == username
+                )
             ).first()
             
             if existing_profile:
@@ -225,6 +244,7 @@ class AlibabaSyncService:
             
             # Create new profile
             profile = Profile(
+                account_id=account.id,
                 platform_user_id=conv_data.get('id', f"user_{username}"),
                 username=username,
                 display_name=username,
@@ -321,7 +341,9 @@ class AlibabaSyncService:
                     content=msg_data.get('content', ''),
                     content_type=msg_data.get('message_type', 'text'),
                     direction=MessageDirection.INCOMING if msg_data.get('direction') == 'incoming' else MessageDirection.OUTGOING,
-                    status=MessageStatus.DELIVERED
+                    status=MessageStatus.DELIVERED,
+                    is_reply=msg_data.get('is_reply', False),
+                    reply_to_content=msg_data.get('reply_to_content')
                 )
                 
                 # Set timestamp
@@ -338,9 +360,23 @@ class AlibabaSyncService:
                 self.db.add(message)
                 stats["messages_added"] += 1
                 
-                # Update chat's last message time
-                if not chat.last_message_at or message.platform_timestamp > chat.last_message_at:
-                    chat.last_message_at = message.platform_timestamp
+                # Update chat's last message time (ensure timezone-aware comparison)
+                if message.platform_timestamp:
+                    if not chat.last_message_at:
+                        chat.last_message_at = message.platform_timestamp
+                    else:
+                        # Ensure both are timezone-aware for comparison
+                        chat_time = chat.last_message_at
+                        msg_time = message.platform_timestamp
+                        
+                        # Make timezone-aware if needed
+                        if chat_time.tzinfo is None:
+                            chat_time = chat_time.replace(tzinfo=timezone.utc)
+                        if msg_time.tzinfo is None:
+                            msg_time = msg_time.replace(tzinfo=timezone.utc)
+                        
+                        if msg_time > chat_time:
+                            chat.last_message_at = message.platform_timestamp
             
             self.db.commit()
             

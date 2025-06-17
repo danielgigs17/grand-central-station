@@ -1,35 +1,43 @@
 # Alibaba Message Sync System
 
-This is a production-ready automated message synchronization system for Alibaba.com that performs initial sync going back 1 week, then syncs new messages every 5 minutes.
+This is a production-ready automated message synchronization system for Alibaba.com that captures conversation history and syncs new messages.
 
 ## Features
 
-- **Automated Authentication**: Browser automation with 2FA support via IMAP email integration
-- **Initial Sync**: Syncs messages from the past week on first run
-- **Incremental Sync**: Checks for new messages every 5 minutes
-- **Database Integration**: Stores messages, chats, and profiles in the existing database
-- **Error Handling**: Robust error handling with retry logic and exponential backoff
+- **Long-Running Browser Adapter**: Persistent browser context with cookie persistence
+- **Automated Authentication**: Browser automation with 2FA support via IMAP email integration  
+- **Message Extraction**: Advanced DOM parsing with JavaScript data extraction
+- **Message Deduplication**: Content-based deduplication using hashing
+- **Reply Detection**: Framework for detecting quoted/threaded messages
+- **Database Integration**: Stores messages, chats, and profiles with reply tracking
+- **Error Handling**: Robust error handling with retry logic
 - **Monitoring**: Comprehensive logging and health checks
-- **Production Ready**: Docker deployment, systemd service, graceful shutdown
 
 ## Architecture
 
 ```
 ┌─────────────────┐    ┌────────────────┐    ┌─────────────────┐
-│   Scheduler     │───▶│  Sync Service  │───▶│ Production      │
-│   (5 min loop)  │    │                │    │ Adapter         │
+│   Scheduler     │───▶│  Sync Service  │───▶│ Long-Running    │
+│   (Periodic)    │    │                │    │ Adapter         │
 └─────────────────┘    └────────────────┘    └─────────────────┘
                                                        │
                        ┌────────────────┐              │
                        │   Database     │◀─────────────┘
-                       │   (Messages,   │
-                       │   Chats,       │
-                       │   Profiles)    │
-                       └────────────────┘
-                                │
-                       ┌────────────────┐
-                       │   Email 2FA    │
-                       │   (IMAP)       │
+                       │   (Messages,   │              │
+                       │   Chats,       │              │
+                       │   Profiles,    │              │
+                       │   Reply Data)  │              │
+                       └────────────────┘              │
+                                │                      │
+                       ┌────────────────┐              │
+                       │   Email 2FA    │              │
+                       │   (IMAP)       │              │
+                       └────────────────┘              │
+                                                       │
+                       ┌────────────────┐              │
+                       │ Message Parser │◀─────────────┘
+                       │ (Deduplication,│
+                       │  Reply Detect) │
                        └────────────────┘
 ```
 
@@ -37,52 +45,51 @@ This is a production-ready automated message synchronization system for Alibaba.
 
 ### 1. Environment Setup
 
-Copy the environment template:
-```bash
-cp .env.alibaba.template .env.alibaba
-```
-
-Edit `.env.alibaba` with your credentials:
+Set up your environment variables:
 ```bash
 # Required
-ALIBABA_USERNAME=your-username@email.com
-ALIBABA_PASSWORD=your-password
-EMAIL_PASSWORD=your-email-app-password
-DATABASE_URL=postgresql://user:pass@localhost:5432/db
+export ALIBABA_USERNAME=your-username@email.com
+export ALIBABA_PASSWORD=your-password
+export EMAIL_PASSWORD=your-email-app-password
+export DATABASE_URL=postgresql://user:pass@localhost:5432/db
 
 # Optional
-SYNC_INTERVAL_MINUTES=5
-LOG_LEVEL=INFO
+export BROWSER_HEADLESS=true
+export EMAIL_2FA_FOLDER=2FA
+export LOG_LEVEL=INFO
 ```
 
-### 2. Docker Deployment (Recommended)
-
-```bash
-# Start the service
-docker-compose -f docker-compose.alibaba.yml up -d
-
-# View logs
-docker-compose -f docker-compose.alibaba.yml logs -f alibaba-sync
-
-# Stop the service
-docker-compose -f docker-compose.alibaba.yml down
-```
-
-### 3. Manual Deployment
+### 2. Installation
 
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+pip install -r requirements-alibaba.txt
 playwright install chromium
 
-# Run initial sync
+# Set up virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements-alibaba.txt
+```
+
+### 3. Database Setup
+
+```bash
+# The system will automatically add required columns for reply tracking
+# No manual migration needed - it uses ALTER TABLE IF NOT EXISTS
+```
+
+### 4. Running the System
+
+```bash
+# Run initial sync to capture past 7 days
 python tools/alibaba_sync_manager.py initial --days 7
 
-# Start scheduler
+# Start periodic scheduler
 python tools/alibaba_sync_manager.py scheduler --interval 5
 ```
 
-### 4. Systemd Service
+### 5. Optional: Systemd Service
 
 ```bash
 # Copy service file
@@ -126,39 +133,44 @@ python tools/alibaba_sync_manager.py stats --account ACCOUNT_ID
 
 ## How It Works
 
+### Long-Running Browser Adapter
+
+The system uses a persistent browser context that stays open between syncs:
+
+1. **Persistent Context**: Browser maintains session state and cookies
+2. **Cookie Persistence**: Session data saved to disk for reuse
+3. **Conversation Navigation**: Automatically clicks through conversation tabs
+4. **Message Extraction**: Uses DOM parsing and JavaScript data extraction
+
 ### Authentication Flow
 
 1. **Browser Automation**: Uses Playwright with stealth settings to avoid detection
-2. **Login Form**: Automatically fills username and password
-3. **2FA Detection**: Detects when 2FA verification is required
-4. **Email Retrieval**: Connects to email via IMAP to retrieve 2FA codes
-5. **Coordinate Clicking**: Uses precise coordinates to fill verification code
-6. **Session Persistence**: Saves browser state for future use
+2. **Session Reuse**: Attempts to use saved cookies first
+3. **Login Form**: Automatically fills username and password if needed
+4. **2FA Detection**: Detects when 2FA verification is required
+5. **Email Retrieval**: Connects to email via IMAP to retrieve 2FA codes (auto-filters to 2FA folder)
+6. **Coordinate Clicking**: Uses precise coordinates (730,360) to fill verification code
+7. **Session Persistence**: Saves browser state for future use
 
-### Sync Process
+### Message Extraction
 
-#### Initial Sync
-- Runs on first startup or when account hasn't been synced in 24+ hours
-- Retrieves conversations from the past week (configurable)
-- Creates database records for:
-  - Profiles (conversation participants)
-  - Chats (conversations)
-  - Messages (message content)
-
-#### Incremental Sync
-- Runs every 5 minutes (configurable)
-- Checks existing chats for new messages since last sync
-- Discovers new conversations
-- Updates database with new content only
+1. **Conversation Detection**: Finds conversation elements using CSS selectors
+2. **DOM Parsing**: Extracts message content from DOM elements
+3. **JavaScript Extraction**: Parses JSON data embedded in page JavaScript
+4. **Content Cleaning**: Removes UI elements, duplicates, and artifacts
+5. **Deduplication**: Uses content hashing to prevent duplicate messages
+6. **Reply Detection**: Framework to identify quoted/threaded messages
 
 ### Database Schema
 
-The system integrates with existing models:
+The system extends existing models with reply tracking:
 
 - **PlatformAccount**: Alibaba account credentials and sync status
 - **Profile**: Conversation participants (e.g., "Linda Wu")
 - **Chat**: Individual conversations/threads
-- **Message**: Individual messages with content, timestamps, direction
+- **Message**: Individual messages with content, timestamps, direction, reply tracking
+  - `is_reply`: Boolean flag for reply messages
+  - `reply_to_content`: Content of the message being replied to
 
 ## Configuration
 
@@ -170,11 +182,9 @@ The system integrates with existing models:
 | `ALIBABA_PASSWORD` | Alibaba login password | Required |
 | `EMAIL_PASSWORD` | Email app password for 2FA | Required |
 | `DATABASE_URL` | PostgreSQL connection string | Required |
-| `SYNC_INTERVAL_MINUTES` | Minutes between syncs | 5 |
+| `BROWSER_HEADLESS` | Run browser in headless mode | true |
+| `EMAIL_2FA_FOLDER` | Email folder for 2FA codes | 2FA |
 | `LOG_LEVEL` | Logging level | INFO |
-| `RATE_LIMIT_INITIAL_DELAY` | Initial retry delay (seconds) | 60 |
-| `RATE_LIMIT_BACKOFF_FACTOR` | Exponential backoff factor | 2 |
-| `RATE_LIMIT_MAX_DELAY` | Maximum retry delay (seconds) | 3600 |
 
 ### Email Setup
 
